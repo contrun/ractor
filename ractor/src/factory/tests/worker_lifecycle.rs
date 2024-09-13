@@ -125,7 +125,7 @@ async fn test_worker_death_restarts_and_gets_next_message() {
             },
             lifecycle_hooks: None,
             worker_builder: Box::new(worker_builder),
-            collect_worker_stats: false,
+            stats: None,
         },
     )
     .await

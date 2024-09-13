@@ -186,7 +186,7 @@ pub mod worker;
 #[cfg(test)]
 mod tests;
 
-use stats::MessageProcessingStats;
+use stats::FactoryStatsLayer;
 
 pub use discard::{
     DiscardHandler, DiscardMode, DiscardReason, DiscardSettings, DynamicDiscardController,

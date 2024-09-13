@@ -159,7 +159,7 @@ async fn test_basic_priority_queueing() {
                 counters: counters.clone(),
                 signal: signal.clone(),
             }),
-            collect_worker_stats: false,
+            stats: None,
         },
     )
     .await

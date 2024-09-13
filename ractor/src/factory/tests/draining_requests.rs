@@ -133,7 +133,7 @@ async fn test_request_draining() {
             discard_settings: DiscardSettings::None,
             lifecycle_hooks: None,
             worker_builder: Box::new(worker_builder),
-            collect_worker_stats: false,
+            stats: None,
         },
     )
     .await
