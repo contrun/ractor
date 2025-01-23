@@ -51,7 +51,7 @@ impl Actor for RootActor {
 struct BenchActor;
 
 impl Actor for BenchActor {
-    type Msg = ();
+    type Msg = String;
 
     type State = Vec<u8>;
 
@@ -59,9 +59,13 @@ impl Actor for BenchActor {
 
     async fn pre_start(
         &self,
-        _myself: ActorRef<Self::Msg>,
+        myself: ActorRef<Self::Msg>,
         _: (),
     ) -> Result<Self::State, ActorProcessingErr> {
+        for i in 0..100 {
+            let msg = format!("Hello, world! {}", i);
+            myself.send_message(msg).expect("actor alive");
+        }
         Ok([0u8; 1024].to_vec())
     }
 
