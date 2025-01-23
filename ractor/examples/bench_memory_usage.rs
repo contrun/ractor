@@ -7,6 +7,8 @@
 // Use Jemalloc to measure memory usage
 // https://stackoverflow.com/questions/30869007/how-to-benchmark-memory-usage-of-a-function
 
+use std::time::Instant;
+
 use jemalloc_ctl::{epoch, stats};
 
 use ractor::{concurrency::JoinSet, Actor, ActorProcessingErr, ActorRef};
@@ -26,7 +28,7 @@ pub struct RootActor;
 
 impl Actor for RootActor {
     type Msg = ();
-    type State = ();
+    type State = usize;
     type Arguments = ();
 
     async fn pre_start(
@@ -34,6 +36,19 @@ impl Actor for RootActor {
         _: ActorRef<Self::Msg>,
         _: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
+        Ok(0)
+    }
+
+    async fn handle(
+        &self,
+        myself: ActorRef<Self::Msg>,
+        _message: Self::Msg,
+        n: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        *n += 1;
+        if *n == N_ACTORS {
+            myself.stop(Some("All actor finished".to_string()));
+        }
         Ok(())
     }
 
@@ -55,34 +70,41 @@ struct BenchActor;
 impl Actor for BenchActor {
     type Msg = String;
 
-    type State = [u8; STATE_SIZE];
+    type State = (u128, ActorRef<()>, [u8; STATE_SIZE]);
 
-    type Arguments = ();
+    type Arguments = ActorRef<()>;
 
     async fn pre_start(
         &self,
         myself: ActorRef<Self::Msg>,
-        _: (),
+        parent: ActorRef<()>,
     ) -> Result<Self::State, ActorProcessingErr> {
         for i in 0..N_MESSAGES {
             let msg = format!("Hello, world! {}", i);
             myself.send_message(msg).expect("actor alive");
         }
-        Ok([0; STATE_SIZE])
+        Ok((0, parent, [0; STATE_SIZE]))
     }
 
     async fn handle(
         &self,
         _myself: ActorRef<Self::Msg>,
-        _message: Self::Msg,
-        _state: &mut Self::State,
+        message: Self::Msg,
+        (len, parent, _state): &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
+        let msg_len = message.len() as u128;
+        *len += msg_len;
+        let stop = format!("Hello, world! {}", N_MESSAGES - 1);
+        if message == stop {
+            parent.send_message(()).expect("parent alive");
+        }
         Ok(())
     }
 }
 
 struct Task<T> {
     join_set: JoinSet<T>,
+    #[allow(unused)]
     root: ActorRef<()>,
     runtime: Runtime,
 }
@@ -98,6 +120,7 @@ impl<T> Task<T> {
 }
 
 impl<T: 'static> Task<T> {
+    #[allow(unused)]
     fn stop(&self) {
         self.root.stop(Some("Root actor stopped".to_string()));
     }
@@ -109,9 +132,10 @@ impl<T: 'static> Task<T> {
             ..
         } = self;
 
-        runtime.block_on(async move { while join_set.join_next().await.is_some() {} })
+        runtime.block_on(async move { while join_set.join_next().await.is_some() {} });
     }
 
+    #[allow(unused)]
     fn cancel(&mut self) {
         self.stop();
         self.join();
@@ -130,9 +154,10 @@ fn create_actors() -> Task<Result<(), JoinError>> {
         let root_cell = root.get_cell();
 
         for _ in 0..N_ACTORS {
-            let (_, handler) = Actor::spawn_linked(None, BenchActor, (), root_cell.clone())
-                .await
-                .expect("Failed to create test agent");
+            let (_, handler) =
+                Actor::spawn_linked(None, BenchActor, root.clone(), root_cell.clone())
+                    .await
+                    .expect("Failed to create test agent");
             join_set.spawn(handler);
         }
         (root, join_set)
@@ -154,8 +179,11 @@ fn main() {
         "Creation of {N_ACTORS} actors with {N_MESSAGES} messages and state size {STATE_SIZE}"
     );
     loop {
+        let start = Instant::now(); // Start timing
         let mut task = create_actors();
         print_memory_usage();
-        task.cancel();
+        task.join();
+        let elapsed = start.elapsed(); // Calculate elapsed time
+        println!("Elapsed time for this iteration: {:?}", elapsed);
     }
 }
