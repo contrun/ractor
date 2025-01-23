@@ -79,6 +79,15 @@ impl Actor for BenchActor {
     ) -> Result<(), ActorProcessingErr> {
         Ok(())
     }
+
+    async fn post_stop(
+        &self,
+        _myself: ActorRef<Self::Msg>,
+        _state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        println!("Actor stopped");
+        Ok(())
+    }
 }
 
 struct Task<T> {
