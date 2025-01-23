@@ -57,6 +57,8 @@ tokio = { version = "1.30", features = ["rt", "time", "sync", "macros", "rt-mult
 tracing-glog = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"]}
 tracing-test = "0.2"
+jemalloc-ctl = "0.5.4"
+jemallocator = "0.5.4"
 
 [[bench]]
 name = "actor"
