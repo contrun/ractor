@@ -9,67 +9,142 @@
 
 use jemalloc_ctl::{epoch, stats};
 
-use ractor::{Actor, ActorProcessingErr, ActorRef};
+use ractor::{concurrency::JoinSet, Actor, ActorProcessingErr, ActorRef};
+use tokio::{
+    runtime::{Builder, Runtime},
+    task::JoinError,
+};
 
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
+const N_ACTORS: usize = 100000;
+
+pub struct RootActor;
+
+impl Actor for RootActor {
+    type Msg = ();
+    type State = ();
+    type Arguments = ();
+
+    async fn pre_start(
+        &self,
+        _: ActorRef<Self::Msg>,
+        _: Self::Arguments,
+    ) -> Result<Self::State, ActorProcessingErr> {
+        Ok(())
+    }
+
+    async fn post_stop(
+        &self,
+        myself: ActorRef<Self::Msg>,
+        _state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        myself
+            .get_cell()
+            .stop_children_and_wait(Some("Root actor stopped".to_string()), None)
+            .await;
+        Ok(())
+    }
+}
+
 struct BenchActor;
 
-struct BenchActorMessage;
-
 impl Actor for BenchActor {
-    type Msg = BenchActorMessage;
+    type Msg = ();
 
-    type State = ();
+    type State = Vec<u8>;
 
     type Arguments = ();
 
     async fn pre_start(
         &self,
-        myself: ActorRef<Self::Msg>,
+        _myself: ActorRef<Self::Msg>,
         _: (),
     ) -> Result<Self::State, ActorProcessingErr> {
-        let _ = myself.cast(BenchActorMessage);
-        Ok(())
+        Ok([0u8; 1024].to_vec())
     }
 
     async fn handle(
         &self,
-        myself: ActorRef<Self::Msg>,
+        _myself: ActorRef<Self::Msg>,
         _message: Self::Msg,
         _state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
-        myself.stop(None);
+        Ok(())
+    }
+
+    async fn post_stop(
+        &self,
+        _myself: ActorRef<Self::Msg>,
+        _state: &mut Self::State,
+    ) -> Result<(), ActorProcessingErr> {
+        println!("Actor stopped");
         Ok(())
     }
 }
 
-fn create_actors() {
-    let n = 10000;
+struct Task<T> {
+    join_set: JoinSet<T>,
+    root: ActorRef<()>,
+    runtime: Option<Runtime>,
+}
 
-    eprintln!("Creation of {n} actors");
-    let runtime = tokio::runtime::Builder::new_multi_thread().build().unwrap();
-    runtime.block_on(async move {
-        let mut handles = vec![];
-        for _ in 0..n {
-            let (_, handler) = Actor::spawn(None, BenchActor, ())
+impl<T> Task<T> {
+    fn new(runtime: Runtime, root: ActorRef<()>, join_set: JoinSet<T>) -> Self {
+        Self {
+            join_set,
+            root,
+            runtime: Some(runtime),
+        }
+    }
+}
+
+impl<T: 'static> Task<T> {
+    fn cancel(&mut self) {
+        self.root.stop(Some("Root actor stopped".to_string()));
+        let runtime = self.runtime.take().unwrap();
+        runtime.block_on(async move { while self.join_set.join_next().await.is_some() {} })
+    }
+}
+
+fn create_actors() -> Task<Result<(), JoinError>> {
+    eprintln!("Creation of {N_ACTORS} actors");
+    let runtime = Builder::new_multi_thread().build().unwrap();
+    let (root, join_set) = runtime.block_on(async move {
+        let mut join_set = ractor::concurrency::JoinSet::new();
+
+        let (root, _handler) = Actor::spawn(None, RootActor, ())
+            .await
+            .expect("Failed to create test agent");
+
+        let root_cell = root.get_cell();
+
+        for _ in 0..N_ACTORS {
+            let (_, handler) = Actor::spawn_linked(None, BenchActor, (), root_cell.clone())
                 .await
                 .expect("Failed to create test agent");
-            handles.push(handler);
+            join_set.spawn(handler);
         }
-        handles
+        (root, join_set)
     });
+    Task::new(runtime, root, join_set)
+}
+
+fn print_memory_usage() {
+    // many statistics are cached and only updated when the epoch is advanced.
+    epoch::advance().unwrap();
+
+    let allocated = stats::allocated::read().unwrap();
+    let resident = stats::resident::read().unwrap();
+    println!("{} bytes allocated/{} bytes resident", allocated, resident);
 }
 
 fn main() {
     loop {
-        // many statistics are cached and only updated when the epoch is advanced.
-        epoch::advance().unwrap();
-
-        let allocated = stats::allocated::read().unwrap();
-        let resident = stats::resident::read().unwrap();
-        println!("{} bytes allocated/{} bytes resident", allocated, resident);
-        create_actors();
+        print_memory_usage();
+        let mut task = create_actors();
+        print_memory_usage();
+        task.cancel();
     }
 }
