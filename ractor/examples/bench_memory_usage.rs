@@ -140,8 +140,8 @@ fn print_memory_usage() {
 }
 
 fn main() {
+    print_memory_usage();
     loop {
-        print_memory_usage();
         let mut task = create_actors();
         print_memory_usage();
         task.cancel();
