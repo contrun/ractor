@@ -3,13 +3,63 @@
 // This source code is licensed under both the MIT license found in the
 // LICENSE-MIT file in the root directory of this source tree.
 
-#[macro_use]
-extern crate criterion;
-
-use criterion::{BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, profiler::Profiler, BatchSize, Criterion};
 #[cfg(feature = "cluster")]
 use ractor::Message;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
+use std::{
+    alloc::{GlobalAlloc, System},
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
+#[global_allocator]
+static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);
+
+struct ReportingAllocator<T: GlobalAlloc> {
+    alloc: T,
+    size: AtomicUsize,
+}
+
+impl<T: GlobalAlloc> ReportingAllocator<T> {
+    pub const fn new(alloc: T) -> Self {
+        Self {
+            alloc,
+            size: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size.load(Ordering::SeqCst)
+    }
+
+    pub fn reset(&self) {
+        self.size.store(0, Ordering::SeqCst);
+    }
+}
+
+unsafe impl<T: GlobalAlloc> GlobalAlloc for ReportingAllocator<T> {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        self.size.fetch_add(layout.size(), Ordering::SeqCst);
+        self.alloc.alloc(layout)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        self.alloc.dealloc(ptr, layout);
+    }
+}
+
+struct MemoryProfiler;
+
+impl Profiler for MemoryProfiler {
+    fn start_profiling(&mut self, _: &str, _: &std::path::Path) {
+        GLOBAL.reset();
+    }
+
+    fn stop_profiling(&mut self, _: &str, _: &std::path::Path) {
+        let size = GLOBAL.size() / 1024;
+        println!("; allocated {} KiB", size);
+    }
+}
 
 struct BenchActor;
 
@@ -328,5 +378,9 @@ fn process_messages(c: &mut Criterion) {
     });
 }
 
-criterion_group!(actors, create_actors, schedule_work, process_messages);
+criterion_group! {
+    name = actors;
+    config = Criterion::default().with_profiler(MemoryProfiler);
+    targets = create_actors, schedule_work, process_messages
+}
 criterion_main!(actors);
