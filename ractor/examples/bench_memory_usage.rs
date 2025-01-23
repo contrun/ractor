@@ -84,7 +84,7 @@ impl Actor for BenchActor {
 struct Task<T> {
     join_set: JoinSet<T>,
     root: ActorRef<()>,
-    runtime: Option<Runtime>,
+    runtime: Runtime,
 }
 
 impl<T> Task<T> {
@@ -92,23 +92,33 @@ impl<T> Task<T> {
         Self {
             join_set,
             root,
-            runtime: Some(runtime),
+            runtime,
         }
     }
 }
 
 impl<T: 'static> Task<T> {
-    fn cancel(&mut self) {
+    fn stop(&self) {
         self.root.stop(Some("Root actor stopped".to_string()));
-        let runtime = self.runtime.take().unwrap();
-        runtime.block_on(async move { while self.join_set.join_next().await.is_some() {} })
+    }
+
+    fn join(&mut self) {
+        let Task {
+            ref mut join_set,
+            ref runtime,
+            ..
+        } = self;
+
+        runtime.block_on(async move { while join_set.join_next().await.is_some() {} })
+    }
+
+    fn cancel(&mut self) {
+        self.stop();
+        self.join();
     }
 }
 
 fn create_actors() -> Task<Result<(), JoinError>> {
-    eprintln!(
-        "Creation of {N_ACTORS} actors with {N_MESSAGES} messages and state size {STATE_SIZE}"
-    );
     let runtime = Builder::new_multi_thread().build().unwrap();
     let (root, join_set) = runtime.block_on(async move {
         let mut join_set = ractor::concurrency::JoinSet::new();
@@ -140,7 +150,9 @@ fn print_memory_usage() {
 }
 
 fn main() {
-    print_memory_usage();
+    eprintln!(
+        "Creation of {N_ACTORS} actors with {N_MESSAGES} messages and state size {STATE_SIZE}"
+    );
     loop {
         let mut task = create_actors();
         print_memory_usage();
