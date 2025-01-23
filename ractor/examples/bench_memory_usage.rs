@@ -18,7 +18,9 @@ use tokio::{
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
+const N_MESSAGES: usize = 100;
 const N_ACTORS: usize = 100000;
+const STATE_SIZE: usize = 1024;
 
 pub struct RootActor;
 
@@ -53,7 +55,7 @@ struct BenchActor;
 impl Actor for BenchActor {
     type Msg = String;
 
-    type State = ();
+    type State = [u8; STATE_SIZE];
 
     type Arguments = ();
 
@@ -62,11 +64,11 @@ impl Actor for BenchActor {
         myself: ActorRef<Self::Msg>,
         _: (),
     ) -> Result<Self::State, ActorProcessingErr> {
-        for i in 0..100 {
+        for i in 0..N_MESSAGES {
             let msg = format!("Hello, world! {}", i);
             myself.send_message(msg).expect("actor alive");
         }
-        Ok(())
+        Ok([0; STATE_SIZE])
     }
 
     async fn handle(
@@ -104,7 +106,9 @@ impl<T: 'static> Task<T> {
 }
 
 fn create_actors() -> Task<Result<(), JoinError>> {
-    eprintln!("Creation of {N_ACTORS} actors");
+    eprintln!(
+        "Creation of {N_ACTORS} actors with {N_MESSAGES} messages and state size {STATE_SIZE}"
+    );
     let runtime = Builder::new_multi_thread().build().unwrap();
     let (root, join_set) = runtime.block_on(async move {
         let mut join_set = ractor::concurrency::JoinSet::new();
