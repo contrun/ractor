@@ -53,7 +53,7 @@ struct BenchActor;
 impl Actor for BenchActor {
     type Msg = String;
 
-    type State = Vec<u8>;
+    type State = ();
 
     type Arguments = ();
 
@@ -66,7 +66,7 @@ impl Actor for BenchActor {
             let msg = format!("Hello, world! {}", i);
             myself.send_message(msg).expect("actor alive");
         }
-        Ok([0u8; 1024].to_vec())
+        Ok(())
     }
 
     async fn handle(
